@@ -272,23 +272,18 @@ const MASTER_TEST_GROUP = {
 let uploadedData = [];
 let groupedData = {};
 
+// Konstanta untuk indeks kolom
+const COLUMN_INDEX = {
+  NOMOR: 0,
+  EXAM: 1,
+  BPJS: 2,
+  NON_BPJS: 3,
+  TOTAL: 4,
+};
+
 // Inisialisasi aplikasi
-document.addEventListener("DOMContentLoaded", function () {
-  initCategories();
+function initApp() {
   setupEventListeners();
-});
-
-// Tampilkan kategori yang dikenali
-function initCategories() {
-  const categoriesList = document.getElementById("categoriesList");
-  categoriesList.innerHTML = "";
-
-  for (const category in MASTER_TEST_GROUP) {
-    const badge = document.createElement("div");
-    badge.className = "category-badge";
-    badge.textContent = category;
-    categoriesList.appendChild(badge);
-  }
 }
 
 // Setup event listeners
@@ -300,9 +295,13 @@ function setupEventListeners() {
   document
     .getElementById("downloadBtn")
     .addEventListener("click", downloadResults);
+  setupDragAndDrop();
+}
 
-  // Setup drag and drop
+// Setup drag and drop functionality
+function setupDragAndDrop() {
   const dropZone = document.getElementById("dropZone");
+
   dropZone.addEventListener("dragover", (e) => {
     e.preventDefault();
     dropZone.style.borderColor = "#3498db";
@@ -343,7 +342,6 @@ function handleFileUpload(e) {
     return;
   }
 
-  // Tampilkan loading
   showLoading();
 
   const reader = new FileReader();
@@ -361,21 +359,15 @@ function handleFileUpload(e) {
 
       if (jsonData.length > 0) {
         uploadedData = jsonData;
-
-        // Aktifkan tombol proses
         document.getElementById("processBtn").disabled = false;
-
-        // Sembunyikan loading
-        hideLoading();
 
         alert(
           'File berhasil diunggah! Silakan klik "Proses Data" untuk melanjutkan.'
         );
-      } else {
-        throw new Error("File Excel kosong atau format tidak sesuai");
       }
     } catch (error) {
       alert("Error membaca file: " + error.message);
+    } finally {
       hideLoading();
     }
   };
@@ -405,131 +397,106 @@ function processData() {
     return;
   }
 
-  // Tampilkan loading
   showLoading();
 
-  // Beri waktu untuk UI update sebelum memproses data berat
   setTimeout(() => {
     try {
-      // Tentukan kolom yang berisi nama pemeriksaan (kolom B)
-      const examColumnIndex = 1;
+      processExcelData();
+      displayResults();
 
-      // Tentukan kolom yang berisi jumlah BPJS (kolom C)
-      const bpjsColumnIndex = 2;
+      document.getElementById("downloadBtn").disabled = false;
+      document.getElementById("resultArea").style.display = "block";
+    } catch (error) {
+      alert("Error memproses data: " + error.message);
+    } finally {
+      hideLoading();
+    }
+  }, 100);
+}
 
-      // Tentukan kolom yang berisi jumlah Non-BPJS (kolom D)
-      const nonBpjsColumnIndex = 3;
+// Proses data Excel
+function processExcelData() {
+  groupedData = {};
 
-      // Tentukan kolom yang berisi jumlah total (kolom E)
-      const totalColumnIndex = 4;
+  for (let i = 3; i < uploadedData.length; i++) {
+    const row = uploadedData[i];
+    if (row.length <= COLUMN_INDEX.EXAM) continue;
 
-      // Kelompokkan data
-      groupedData = {};
+    const examName = String(row[COLUMN_INDEX.EXAM]).trim().toUpperCase();
+    if (!examName) continue;
 
-      // Tambahkan kategori untuk item yang tidak terklasifikasi
-      groupedData["UNCLASSIFIED"] = {
+    // Ambil data dari kolom
+    const bpjsCount = getNumericValue(row, COLUMN_INDEX.BPJS);
+    const nonBpjsCount = getNumericValue(row, COLUMN_INDEX.NON_BPJS);
+    let totalCount = getNumericValue(row, COLUMN_INDEX.TOTAL);
+
+    // Jika totalCount 0, hitung dari bpjsCount + nonBpjsCount
+    if (totalCount === 0) {
+      totalCount = bpjsCount + nonBpjsCount;
+    }
+
+    // Cari kategori untuk pemeriksaan
+    const category = findCategoryForExam(examName);
+
+    // Tambahkan ke kategori
+    if (!groupedData[category]) {
+      groupedData[category] = {
         exams: [],
         bpjsTotal: 0,
         nonBpjsTotal: 0,
         overallTotal: 0,
       };
-
-      for (let i = 1; i < uploadedData.length; i++) {
-        const row = uploadedData[i];
-        if (row.length <= examColumnIndex) continue;
-
-        const examName = String(row[examColumnIndex]).trim().toUpperCase();
-        if (!examName) continue;
-
-        // Ambil jumlah BPJS
-        let bpjsCount = 0;
-        if (row.length > bpjsColumnIndex) {
-          bpjsCount = isNaN(row[bpjsColumnIndex])
-            ? 0
-            : Number(row[bpjsColumnIndex]);
-        }
-
-        // Ambil jumlah Non-BPJS
-        let nonBpjsCount = 0;
-        if (row.length > nonBpjsColumnIndex) {
-          nonBpjsCount = isNaN(row[nonBpjsColumnIndex])
-            ? 0
-            : Number(row[nonBpjsColumnIndex]);
-        }
-
-        // Ambil jumlah total
-        let totalCount = 0;
-        if (row.length > totalColumnIndex) {
-          totalCount = isNaN(row[totalColumnIndex])
-            ? 0
-            : Number(row[totalColumnIndex]);
-        }
-
-        // Jika totalCount 0, hitung dari bpjsCount + nonBpjsCount
-        if (totalCount === 0) {
-          totalCount = bpjsCount + nonBpjsCount;
-        }
-
-        // Cari kategori untuk pemeriksaan ini
-        let category = "UNCLASSIFIED";
-
-        // Cari di semua kategori untuk pemeriksaan
-        for (const [cat, tests] of Object.entries(MASTER_TEST_GROUP)) {
-          for (const test of tests) {
-            // Gunakan pencarian yang lebih cerdas untuk menghindari false positive
-            if (
-              examName === test.toUpperCase() ||
-              (examName.includes(test.toUpperCase()) &&
-                (examName.length === test.length ||
-                  examName.startsWith(test.toUpperCase() + " ") ||
-                  examName.endsWith(" " + test.toUpperCase())))
-            ) {
-              category = cat;
-              break;
-            }
-          }
-          if (category !== "UNCLASSIFIED") break;
-        }
-
-        // Tambahkan ke kategori
-        if (!groupedData[category]) {
-          groupedData[category] = {
-            exams: [],
-            bpjsTotal: 0,
-            nonBpjsTotal: 0,
-            overallTotal: 0,
-          };
-        }
-
-        groupedData[category].exams.push({
-          name: examName,
-          bpjsCount: bpjsCount,
-          nonBpjsCount: nonBpjsCount,
-          totalCount: totalCount,
-          rowData: row,
-        });
-
-        groupedData[category].bpjsTotal += bpjsCount;
-        groupedData[category].nonBpjsTotal += nonBpjsCount;
-        groupedData[category].overallTotal += totalCount;
-      }
-
-      // Tampilkan hasil
-      displayResults();
-
-      // Aktifkan tombol download
-      document.getElementById("downloadBtn").disabled = false;
-
-      // Tampilkan area hasil
-      document.getElementById("resultArea").style.display = "block";
-
-      // Sembunyikan loading
-      hideLoading();
-    } catch (error) {
-      alert("Error memproses data: " + error.message);
-      hideLoading();
     }
-  }, 100);
+
+    groupedData[category].exams.push({
+      name: examName,
+      bpjsCount: bpjsCount,
+      nonBpjsCount: nonBpjsCount,
+      totalCount: totalCount,
+      rowData: row,
+    });
+
+    groupedData[category].bpjsTotal += bpjsCount;
+    groupedData[category].nonBpjsTotal += nonBpjsCount;
+    groupedData[category].overallTotal += totalCount;
+  }
+}
+
+// Dapatkan nilai numerik dari row
+function getNumericValue(row, index) {
+  return row.length > index && !isNaN(row[index]) ? parseInt(row[index]) : 0;
+}
+
+// Cari kategori untuk pemeriksaan
+function findCategoryForExam(examName) {
+  // Prioritaskan pencarian untuk protein khusus terlebih dahulu
+  if (
+    examName.includes("PROTEIN TOTAL PLEURA") ||
+    examName.includes("PROTEIN - CAIRAN TUBUH LAIN") ||
+    examName.includes("LDH PLEURA") ||
+    examName.includes("LDH TRANS / EXUDAT")
+  ) {
+    return "CT - ANALISA CAIRAN TUBUH";
+  } else if (
+    examName.includes("PROTEIN ALBUMIN / GLOBULIN") ||
+    examName.includes("PROTEIN TOTAL") ||
+    examName.includes("GLUKOSA DARAH SEWAKTU")
+  ) {
+    return "KM - KIMIA KLINIK";
+  } else if (examName.includes("TROMBOSIT APHERASIS")) {
+    return "PI - PMI";
+  }
+
+  // Cari di semua kategori untuk pemeriksaan lainnya
+  for (const [category, tests] of Object.entries(MASTER_TEST_GROUP)) {
+    for (const test of tests) {
+      if (examName.includes(test.toUpperCase())) {
+        return category;
+      }
+    }
+  }
+
+  return "JUMLAH PEMERIKSAAN";
 }
 
 // Fungsi untuk menampilkan hasil
@@ -538,67 +505,92 @@ function displayResults() {
   const resultCount = document.getElementById("resultCount");
   const groupedResults = document.getElementById("groupedResults");
 
-  // Hitung total pemeriksaan
-  let totalExams = 0;
-  let totalBpjs = 0;
-  let totalNonBpjs = 0;
-  let totalOverall = 0;
-
-  for (const category in groupedData) {
-    if (
-      category === "UNCLASSIFIED" &&
-      groupedData[category].exams.length === 0
-    ) {
-      continue; // Lewati kategori unclassified jika kosong
-    }
-
-    totalExams += groupedData[category].exams.length;
-    totalBpjs += groupedData[category].bpjsTotal;
-    totalNonBpjs += groupedData[category].nonBpjsTotal;
-    totalOverall += groupedData[category].overallTotal;
-  }
-
-  resultCount.textContent = `${totalExams} pemeriksaan (Total: ${totalOverall})`;
+  // Hitung total
+  const totals = calculateTotals();
+  resultCount.textContent = `${totals.exams} pemeriksaan (Total: ${totals.overall})`;
 
   // Kosongkan tabel
   resultTable.innerHTML = "";
   groupedResults.innerHTML = "";
 
   // Tampilkan summary
+  displaySummaryTable(resultTable, totals);
+
+  // Tampilkan detail grouped results
+  displayGroupedResults(groupedResults);
+}
+
+// Hitung total keseluruhan
+function calculateTotals() {
+  let exams = 0,
+    bpjs = 0,
+    nonBpjs = 0,
+    overall = 0;
+
   for (const category in groupedData) {
-    // Lewati kategori unclassified jika kosong
-    if (
-      category === "UNCLASSIFIED" &&
-      groupedData[category].exams.length === 0
-    ) {
-      continue;
-    }
+    exams += groupedData[category].exams.length;
+    bpjs += groupedData[category].bpjsTotal;
+    nonBpjs += groupedData[category].nonBpjsTotal;
+    overall += groupedData[category].overallTotal;
+  }
 
-    const examCount = groupedData[category].exams.length;
-    const bpjsTotal = groupedData[category].bpjsTotal;
-    const nonBpjsTotal = groupedData[category].nonBpjsTotal;
-    const overallTotal = groupedData[category].overallTotal;
+  return { exams, bpjs, nonBpjs, overall };
+}
 
-    // Tambahkan ke tabel summary
+// Tampilkan summary table
+function displaySummaryTable(resultTable, totals) {
+  for (const category in groupedData) {
+    const data = groupedData[category];
     const row = document.createElement("tr");
+
     row.innerHTML = `
             <td>${category}</td>
-            <td>${examCount}</td>
-            <td class="exam-count">${bpjsTotal}</td>
-            <td class="exam-count">${nonBpjsTotal}</td>
-            <td class="exam-count">${overallTotal}</td>
+            <td>${data.exams.length}</td>
+            <td class="exam-count">${data.bpjsTotal}</td>
+            <td class="exam-count">${data.nonBpjsTotal}</td>
+            <td class="exam-count">${data.overallTotal}</td>
         `;
-    resultTable.appendChild(row);
 
-    // Buat card untuk setiap kategori
+    resultTable.appendChild(row);
+  }
+
+  // Tambahkan baris total keseluruhan
+  if (Object.keys(groupedData).length > 0) {
+    const totalRow = document.createElement("tr");
+    totalRow.innerHTML = `
+            <td><strong>Total Keseluruhan</strong></td>
+            <td><strong>${totals.exams}</strong></td>
+            <td class="exam-count"><strong>${totals.bpjs}</strong></td>
+            <td class="exam-count"><strong>${totals.nonBpjs}</strong></td>
+            <td class="exam-count"><strong>${totals.overall}</strong></td>
+        `;
+    totalRow.style.backgroundColor = "#f8f9fa";
+    resultTable.appendChild(totalRow);
+  } else {
+    resultTable.innerHTML =
+      '<tr><td colspan="5" class="text-center">Tidak ada data yang dapat dikelompokkan</td></tr>';
+  }
+}
+
+// Tampilkan grouped results
+function displayGroupedResults(groupedResults) {
+  for (const category in groupedData) {
+    const data = groupedData[category];
     const categoryCard = document.createElement("div");
     categoryCard.className = "mb-4";
+
     categoryCard.innerHTML = `
             <h5 class="mb-3">${category} 
-                <span class="badge bg-secondary">${examCount} item</span>
-                <span class="bpjs-badge">BPJS: ${bpjsTotal}</span>
-                <span class="non-bpjs-badge">Non-BPJS: ${nonBpjsTotal}</span>
-                <span class="total-badge-small">Total: ${overallTotal}</span>
+                <span class="badge bg-secondary">${
+                  data.exams.length
+                } item</span>
+                <span class="bpjs-badge">BPJS: ${data.bpjsTotal}</span>
+                <span class="non-bpjs-badge">Non-BPJS: ${
+                  data.nonBpjsTotal
+                }</span>
+                <span class="total-badge-small">Total: ${
+                  data.overallTotal
+                }</span>
             </h5>
             <div class="table-responsive">
                 <table class="table table-sm table-striped">
@@ -612,7 +604,7 @@ function displayResults() {
                         </tr>
                     </thead>
                     <tbody>
-                        ${groupedData[category].exams
+                        ${data.exams
                           .map(
                             (exam, index) => `
                             <tr>
@@ -629,24 +621,8 @@ function displayResults() {
                 </table>
             </div>
         `;
-    groupedResults.appendChild(categoryCard);
-  }
 
-  // Tambahkan baris total keseluruhan
-  if (Object.keys(groupedData).length > 0) {
-    const totalRow = document.createElement("tr");
-    totalRow.innerHTML = `
-            <td><strong>Total Keseluruhan</strong></td>
-            <td><strong>${totalExams}</strong></td>
-            <td class="exam-count"><strong>${totalBpjs}</strong></td>
-            <td class="exam-count"><strong>${totalNonBpjs}</strong></td>
-            <td class="exam-count"><strong>${totalOverall}</strong></td>
-        `;
-    totalRow.style.backgroundColor = "#f8f9fa";
-    resultTable.appendChild(totalRow);
-  } else {
-    resultTable.innerHTML =
-      '<tr><td colspan="5" class="text-center">Tidak ada data yang dapat dikelompokkan</td></tr>';
+    groupedResults.appendChild(categoryCard);
   }
 }
 
@@ -657,124 +633,98 @@ function downloadResults() {
     return;
   }
 
-  // Tampilkan loading
   showLoading();
 
-  // Beri waktu untuk UI update sebelum memproses data berat
   setTimeout(() => {
     try {
-      // Buat workbook baru
       const wb = XLSX.utils.book_new();
 
       // Buat worksheet untuk setiap kategori
-      for (const category in groupedData) {
-        // Lewati kategori unclassified jika kosong
-        if (
-          category === "UNCLASSIFIED" &&
-          groupedData[category].exams.length === 0
-        ) {
-          continue;
-        }
-
-        const data = [];
-
-        // Tambahkan header
-        data.push([
-          "No",
-          "Nama Pemeriksaan",
-          "BPJS",
-          "Non-BPJS",
-          "Jumlah",
-          "Kategori",
-        ]);
-
-        // Tambahkan data untuk kategori ini
-        groupedData[category].exams.forEach((exam, index) => {
-          data.push([
-            index + 1,
-            exam.name,
-            exam.bpjsCount,
-            exam.nonBpjsCount,
-            exam.totalCount,
-            category,
-          ]);
-        });
-
-        // Tambahkan baris total
-        data.push([
-          "",
-          "TOTAL",
-          groupedData[category].bpjsTotal,
-          groupedData[category].nonBpjsTotal,
-          groupedData[category].overallTotal,
-          "",
-        ]);
-
-        const ws = XLSX.utils.aoa_to_sheet(data);
-        XLSX.utils.book_append_sheet(wb, ws, category.substring(0, 30)); // Batasi panjang nama sheet
-      }
+      createCategoryWorksheets(wb);
 
       // Buat worksheet ringkasan
-      const summaryData = [
-        ["KATEGORI", "JUMLAH PEMERIKSAAN", "BPJS", "NON-BPJS", "TOTAL"],
-      ];
-
-      for (const category in groupedData) {
-        // Lewati kategori unclassified jika kosong
-        if (
-          category === "UNCLASSIFIED" &&
-          groupedData[category].exams.length === 0
-        ) {
-          continue;
-        }
-
-        summaryData.push([
-          category,
-          groupedData[category].exams.length,
-          groupedData[category].bpjsTotal,
-          groupedData[category].nonBpjsTotal,
-          groupedData[category].overallTotal,
-        ]);
-      }
-
-      // Tambahkan total keseluruhan
-      let totalExams = 0;
-      let totalBpjs = 0;
-      let totalNonBpjs = 0;
-      let totalOverall = 0;
-
-      for (const category in groupedData) {
-        // Lewati kategori unclassified jika kosong
-        if (
-          category === "UNCLASSIFIED" &&
-          groupedData[category].exams.length === 0
-        ) {
-          continue;
-        }
-
-        totalExams += groupedData[category].exams.length;
-        totalBpjs += groupedData[category].bpjsTotal;
-        totalNonBpjs += groupedData[category].nonBpjsTotal;
-        totalOverall += groupedData[category].overallTotal;
-      }
-
-      summaryData.push([
-        "TOTAL KESELURUHAN",
-        totalExams,
-        totalBpjs,
-        totalNonBpjs,
-        totalOverall,
-      ]);
-
-      const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
-      XLSX.utils.book_append_sheet(wb, summaryWs, "RINGKASAN");
+      createSummaryWorksheet(wb);
 
       XLSX.writeFile(wb, "Hasil_Pengelompokan_Pemeriksaan.xlsx");
-
-      hideLoading();
     } catch (error) {
       alert("Error membuat file Excel: " + error.message);
+    } finally {
       hideLoading();
     }
   }, 100);
 }
+
+// Buat worksheet untuk setiap kategori
+function createCategoryWorksheets(wb) {
+  for (const category in groupedData) {
+    const data = [];
+
+    // Header
+    data.push([
+      "No",
+      "Nama Pemeriksaan",
+      "BPJS",
+      "Non-BPJS",
+      "Jumlah",
+      "Kategori",
+    ]);
+
+    // Data
+    groupedData[category].exams.forEach((exam, index) => {
+      data.push([
+        index + 1,
+        exam.name,
+        exam.bpjsCount,
+        exam.nonBpjsCount,
+        exam.totalCount,
+        category,
+      ]);
+    });
+
+    // Total
+    data.push([
+      "",
+      "TOTAL",
+      groupedData[category].bpjsTotal,
+      groupedData[category].nonBpjsTotal,
+      groupedData[category].overallTotal,
+      "",
+    ]);
+
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws, category.substring(0, 30));
+  }
+}
+
+// Buat worksheet ringkasan
+function createSummaryWorksheet(wb) {
+  const summaryData = [
+    ["KATEGORI", "JUMLAH PEMERIKSAAN", "BPJS", "NON-BPJS", "TOTAL"],
+  ];
+
+  const totals = calculateTotals();
+
+  for (const category in groupedData) {
+    summaryData.push([
+      category,
+      groupedData[category].exams.length,
+      groupedData[category].bpjsTotal,
+      groupedData[category].nonBpjsTotal,
+      groupedData[category].overallTotal,
+    ]);
+  }
+
+  summaryData.push([
+    "TOTAL KESELURUHAN",
+    totals.exams,
+    totals.bpjs,
+    totals.nonBpjs,
+    totals.overall,
+  ]);
+
+  const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
+  XLSX.utils.book_append_sheet(wb, summaryWs, "RINGKASAN");
+}
+
+// Inisialisasi aplikasi ketika DOM siap
+document.addEventListener("DOMContentLoaded", initApp);
